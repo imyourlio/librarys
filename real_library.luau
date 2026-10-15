@@ -1,5 +1,4 @@
--- < Real UI : Visual Command > --
--- < made by someone else > --
+-- Real UI made by someone else
 
 -- // Services
 local CoreGui = game:GetService('CoreGui')
@@ -15,8 +14,8 @@ local RunService = game:GetService('RunService')
 local Library = {}
 local Utility = {}
 local Commands = {}
-local Connections = {}     -- global (UserInputService) connections, disconnected on Destroy
-local ThemeListeners = {}  -- callbacks run when the theme changes, cleared on Destroy
+local Connections = {}    
+local ThemeListeners = {}
 local Dragging = false
 
 -- // Utility Functions
@@ -72,12 +71,10 @@ do
         return Color3.fromHSV(H, S, math.clamp(V - 0.35, 0, 1))
     end
 
-    -- Escapes a string so it can be used safely inside a Lua pattern
     function Utility:EscapePattern(String)
         return (String:gsub('%W', '%%%0'))
     end
 
-    -- Escapes a string so it can be used safely inside RichText
     function Utility:EscapeRichText(String)
         String = tostring(String)
         String = String:gsub('&', '&amp;')
@@ -92,11 +89,16 @@ do
         return Connection
     end
 
+    local function IsPointer(Input)
+        return Input.UserInputType == Enum.UserInputType.MouseButton1
+            or Input.UserInputType == Enum.UserInputType.Touch
+    end
+
     function Utility:EnableDragging(Handle, Target)
         local DragStart, StartOffset
 
         Handle.InputBegan:Connect(function(Input)
-            if Input.UserInputType == Enum.UserInputType.MouseButton1 then
+            if IsPointer(Input) then
                 Dragging = true
                 DragStart = Input.Position.X
                 StartOffset = Target.Position.X.Offset
@@ -104,7 +106,10 @@ do
         end)
 
         Utility:Connect(UserInputService.InputChanged, function(Input)
-            if Dragging and Input.UserInputType == Enum.UserInputType.MouseMovement then
+            local Moving = Input.UserInputType == Enum.UserInputType.MouseMovement
+                or Input.UserInputType == Enum.UserInputType.Touch
+
+            if Dragging and Moving then
                 local Camera = Workspace.CurrentCamera
                 if not Camera then return end
 
@@ -113,7 +118,6 @@ do
                 local Scale = Target.Position.X.Scale
                 local Anchor = Target.AnchorPoint.X
 
-                -- keep the window fully on screen
                 local Min = -Scale * Viewport + Anchor * Width
                 local Max = Viewport - Width - Scale * Viewport + Anchor * Width
                 local NewOffset = math.clamp(StartOffset + (Input.Position.X - DragStart), Min, Max)
@@ -123,7 +127,7 @@ do
         end)
 
         Utility:Connect(UserInputService.InputEnded, function(Input)
-            if Input.UserInputType == Enum.UserInputType.MouseButton1 then
+            if IsPointer(Input) then
                 Dragging = false
             end
         end)
@@ -134,7 +138,6 @@ do
             return nil
         end
 
-        -- allow key names such as 'LeftControl'
         if #String > 1 then
             local Success, KeyCode = pcall(function()
                 return Enum.KeyCode[String]
@@ -177,7 +180,8 @@ do
                 Theme = { 'Theme', 'THEME', 'theme' },
                 Position = { 'Position', 'position', 'POSITION' },
                 Draggable = { 'Draggable', 'DRAGGABLE', 'draggable' },
-                Prefix = { 'Prefix', 'PREFIX', 'prefix' }
+                Prefix = { 'Prefix', 'PREFIX', 'prefix' },
+                Enabled = { 'Enabled', 'ENABLED', 'enabled' }
             }
         }
 
@@ -326,12 +330,12 @@ Library.Theme = nil
 function Library:CreateWindow(Properties)
     Properties = Properties or {}
 
-    -- // Properties
     local Name = Utility:GetProperty('Window', 'Name', Properties) or 'Command UI Library'
     local Theme = Utility:GetProperty('Window', 'Theme', Properties) or Library.Themes.dark
     local Position = string.lower(Utility:GetProperty('Window', 'Position', Properties) or 'top')
     local Draggable = Utility:GetProperty('Window', 'Draggable', Properties) or false
     local Prefix = Utility:StringToKeyCode(Utility:GetProperty('Window', 'Prefix', Properties)) or Utility:StringToKeyCode(';')
+    local Enabled = Utility:GetProperty('Window', 'Enabled', Properties) == true -- UI stays hidden unless Enabled = true
 
     local IsCustomTheme = type(Theme) == 'table'
 
@@ -339,10 +343,8 @@ function Library:CreateWindow(Properties)
         Theme = Library.Themes[Theme:lower()] or Library.Themes.dark
     end
 
-    -- // Destroy Old UI (also clears old connections / theme listeners)
     Utility:Destroy()
 
-    -- // Set Library Properties
     Library.Prefix = Prefix
     Library.Theme = Theme
 
@@ -350,7 +352,6 @@ function Library:CreateWindow(Properties)
         Library.Themes['custom'] = Theme
     end
 
-    -- // Layout
     local XScales = {
         top = 0.5, bottom = 0.5,
         topleft = 0, bottomleft = 0,
@@ -373,11 +374,11 @@ function Library:CreateWindow(Properties)
     local TitleY = IsBottom and 4 or 40
     local HolderY = IsBottom and -305 or 70
 
-    -- // Create Elements
     local Container = Utility:Create('ScreenGui', {
         Parent = CoreGui,
         Name = 'Command UI Library',
-        ResetOnSpawn = false
+        ResetOnSpawn = false,
+        Enabled = Enabled
     }, {
         Utility:Create('Frame', {
             Name = 'Main',
@@ -386,7 +387,7 @@ function Library:CreateWindow(Properties)
             BackgroundTransparency = 0,
             AnchorPoint = Vector2.new(XScale, YScale),
             Position = UDim2.new(XScale, 0, YScale, ClosedY),
-            Size = UDim2.new(0, 500, 0, 65) -- FIX: Main was never given a size
+            Size = UDim2.new(0, 500, 0, 65)
         }, {
             Utility:Create('UIStroke', {
                 Name = 'MainStroke',
@@ -398,18 +399,38 @@ function Library:CreateWindow(Properties)
             Utility:Create('UICorner', {
                 CornerRadius = UDim.new(0, 5),
                 Name = 'MainCorner'
+            }),
+            Utility:Create('UIScale', {
+                Name = 'MainScale',
+                Scale = 1
             })
         }),
     })
 
     local Main = Container.Main
 
-    -- // Dragging
+    local MainScale = Main.MainScale
+
+    local function UpdateScale()
+        local Camera = Workspace.CurrentCamera
+
+        if Camera and UserInputService.TouchEnabled then
+            MainScale.Scale = math.clamp((Camera.ViewportSize.X - 20) / 500, 0.5, 1)
+        else
+            MainScale.Scale = 1
+        end
+    end
+
+    UpdateScale()
+
+    if Workspace.CurrentCamera then
+        Utility:Connect(Workspace.CurrentCamera:GetPropertyChangedSignal('ViewportSize'), UpdateScale)
+    end
+
     if Draggable then
         Utility:EnableDragging(Main, Main)
     end
 
-    -- // Fillers And Lines
     Utility:Create('Frame', {
         Parent = Main, Name = 'Filler1', BackgroundColor3 = Theme.BackgroundColor, BorderSizePixel = 0,
         Position = UDim2.new(0, 0, 0, FillerY), Size = UDim2.new(0, 5, 0, 5)
@@ -427,7 +448,6 @@ function Library:CreateWindow(Properties)
         Position = UDim2.new(0, 500, 0, FillerY), Size = UDim2.new(0, 1, 0, 10)
     })
 
-    -- // Main Elements
     Utility:Create('TextBox', {
         Font = Enum.Font.Gotham,
         PlaceholderColor3 = Theme.SecondaryTextColor,
@@ -560,7 +580,7 @@ function Library:CreateWindow(Properties)
         TextWrapped = true,
         RichText = true,
         ZIndex = 100,
-        Visible = false, -- FIX: was visible (and never bound) by default
+        Visible = false,
         Text = '',
         Font = Enum.Font.Gotham,
         BorderSizePixel = 0,
@@ -585,7 +605,6 @@ function Library:CreateWindow(Properties)
         })
     })
 
-    -- // Variables
     local CommandInput = Main.CommandInput
     local CommandInputStroke = CommandInput.CommandInputStroke
     local CloseButton = Main.CloseButton
@@ -596,7 +615,6 @@ function Library:CreateWindow(Properties)
     local Busy = false
     local IsInCommandsHolder = false
 
-    -- // Theme Update (listener based, replaces the per-frame polling loops)
     local function OnThemeChanged(Callback)
         table.insert(ThemeListeners, Callback)
     end
@@ -628,7 +646,6 @@ function Library:CreateWindow(Properties)
         Utility:Tween(Container.ToolTip.ToolTipStroke, {Color = T.AccentColor}, 0.25)
     end)
 
-    -- // Animate Elements
     task.wait(0.25)
 
     for _, Element in next, Main:GetChildren() do
@@ -659,7 +676,6 @@ function Library:CreateWindow(Properties)
         Utility:Tween(CloseButton, {TextColor3 = Library.Theme.PrimaryTextColor}, 0.25)
     end)
 
-    -- // Update Command Holder Sizes
     local function UpdateFrameSizes()
         local Count = 0
 
@@ -696,7 +712,6 @@ function Library:CreateWindow(Properties)
     CommandsHolderScrolling.ChildAdded:Connect(UpdateFrameSizes)
     CommandsHolderScrolling.ChildRemoved:Connect(UpdateFrameSizes)
 
-    -- // Tool Tips (FIX: was a global function)
     local function CreateToolTip(Text, PlainText, Enabled)
         local ToolTip = Container:FindFirstChild('ToolTip')
         if not ToolTip then return end
@@ -715,7 +730,6 @@ function Library:CreateWindow(Properties)
                 local Mouse = UserInputService:GetMouseLocation()
                 local Inset = GuiService:GetGuiInset()
 
-                -- FIX: GetMouseLocation includes the GUI inset, the ScreenGui does not
                 ToolTip.Position = UDim2.fromOffset(Mouse.X, Mouse.Y - Inset.Y + 20)
             end)
         else
@@ -723,7 +737,6 @@ function Library:CreateWindow(Properties)
         end
     end
 
-    -- // Open / Close (FIX: replaces the duplicated, position-comparing animation blocks)
     local function MoveMain(OffsetY)
         Utility:Tween(Main, {
             Position = UDim2.new(Main.Position.X.Scale, Main.Position.X.Offset, YScale, OffsetY)
@@ -741,7 +754,7 @@ function Library:CreateWindow(Properties)
     end
 
     local function OpenUI()
-        if IsOpen or Busy then return end
+        if not Container.Enabled or IsOpen or Busy then return end
 
         Busy = true
         IsOpen = true
@@ -787,7 +800,6 @@ function Library:CreateWindow(Properties)
         Busy = false
     end
 
-    -- // Main Button Callbacks
     CloseButton.MouseButton1Down:Connect(function()
         Utility:Tween(CloseButton, {TextColor3 = Utility:Darken(Library.Theme.PrimaryTextColor)}, 0.25)
 
@@ -800,11 +812,10 @@ function Library:CreateWindow(Properties)
         Utility:Destroy()
     end)
 
-    -- // Prefix
     Utility:Connect(UserInputService.InputBegan, function(Input, GameProcessedEvent)
         if GameProcessedEvent or Input.UserInputType ~= Enum.UserInputType.Keyboard then return end
 
-        if Library.Prefix and Input.KeyCode == Library.Prefix then
+        if Container.Enabled and Library.Prefix and Input.KeyCode == Library.Prefix then
             if not IsOpen then
                 OpenUI()
             elseif not Busy then
@@ -813,7 +824,59 @@ function Library:CreateWindow(Properties)
         end
     end)
 
-    -- // Execute Command
+    if UserInputService.TouchEnabled then
+        local MobileButton = Utility:Create('TextButton', {
+            Name = 'MobileToggle',
+            Parent = Container,
+            AnchorPoint = Vector2.new(0, 0.5),
+            Position = UDim2.new(0, 10, 0.5, 0),
+            Size = UDim2.new(0, 44, 0, 44),
+            BackgroundColor3 = Theme.BackgroundColor,
+            BackgroundTransparency = 0.1,
+            BorderSizePixel = 0,
+            AutoButtonColor = false,
+            Font = Enum.Font.GothamBold,
+            Text = '>_',
+            TextColor3 = Theme.PrimaryTextColor,
+            TextSize = 20,
+            ZIndex = 50
+        }, {
+            Utility:Create('UICorner', {
+                Name = 'MobileToggleCorner',
+                CornerRadius = UDim.new(0, 8)
+            }),
+            Utility:Create('UIStroke', {
+                Name = 'MobileToggleStroke',
+                ApplyStrokeMode = 'Border',
+                Color = Theme.AccentColor,
+                Thickness = 1
+            })
+        })
+
+        MobileButton.InputBegan:Connect(function(Input)
+            if Input.UserInputType == Enum.UserInputType.Touch or Input.UserInputType == Enum.UserInputType.MouseButton1 then
+                IsInCommandsHolder = true
+            end
+        end)
+
+        MobileButton.Activated:Connect(function()
+            IsInCommandsHolder = false
+
+            if IsOpen then
+                CloseUI()
+            else
+                OpenUI()
+            end
+        end)
+
+        OnThemeChanged(function()
+            local T = Library.Theme
+
+            Utility:Tween(MobileButton, {BackgroundColor3 = T.BackgroundColor, TextColor3 = T.PrimaryTextColor}, 0.25)
+            Utility:Tween(MobileButton.MobileToggleStroke, {Color = T.AccentColor}, 0.25)
+        end)
+    end
+
     local function Execute(String)
         local Words = {}
 
@@ -825,13 +888,11 @@ function Library:CreateWindow(Properties)
 
         if #Words == 0 then return end
 
-        -- FIX: prefix is escaped (it is used as a pattern) and only stripped from the start
         local PrefixPattern = '^' .. Utility:EscapePattern(Utility:KeyCodeToString(Library.Prefix))
         local First = (Words[1]:lower():gsub(PrefixPattern, ''))
 
         local Command = Commands[First]
 
-        -- FIX: assert() threw inside the caller; just warn instead
         if not Command then
             Utility:Log('Warn', 'Command Not Found: ' .. First)
             return
@@ -846,7 +907,6 @@ function Library:CreateWindow(Properties)
                 table.insert(Missing, tostring(Command.Arguments[Index]))
             end
 
-            -- FIX: 'Error' threw here, which stopped the UI from ever closing afterwards
             Utility:Log('Warn', 'Missing Arguments: ' .. table.concat(Missing, ', ') .. ' | Command: ' .. First)
             return
         end
@@ -854,11 +914,9 @@ function Library:CreateWindow(Properties)
         task.spawn(Command.Callback, Arguments, Players.LocalPlayer)
     end
 
-    -- // Search Commands
     CommandInput:GetPropertyChangedSignal('Text'):Connect(function()
         local Text = CommandInput.Text
 
-        -- remove the prefix character that gets typed when the box is focused with the prefix key
         local Stripped = Text:gsub('^' .. Utility:EscapePattern(Utility:KeyCodeToString(Library.Prefix)), '')
 
         if Stripped ~= Text then
@@ -866,7 +924,6 @@ function Library:CreateWindow(Properties)
             return
         end
 
-        -- FIX: Text:split() split on commas and the query was used as a Lua pattern
         local Query = Text:lower():match('^%s*(%S*)') or ''
 
         for _, Item in next, CommandsHolderScrolling:GetChildren() do
@@ -879,12 +936,17 @@ function Library:CreateWindow(Properties)
         UpdateFrameSizes()
     end)
 
-    -- // Command Entered
     CommandInput.FocusLost:Connect(function(EnterPressed)
         if not IsOpen or Busy or Dragging then return end
+
+        if not EnterPressed and UserInputService.TouchEnabled then
+            task.wait(0.15)
+
+            if not IsOpen or Busy or Dragging then return end
+        end
+
         if IsInCommandsHolder and not EnterPressed then return end
 
-        -- FIX: only run a command on Enter (clicking away used to run an empty command)
         if EnterPressed and CommandInput.Text ~= '' then
             Execute(CommandInput.Text)
         end
@@ -893,6 +955,27 @@ function Library:CreateWindow(Properties)
     end)
 
     local WindowFunctions = {}
+
+    function WindowFunctions:SetEnabled(State)
+        if State then
+            Container.Enabled = true
+        else
+            while Busy do
+                task.wait()
+            end
+
+            CloseUI()
+            Container.Enabled = false
+        end
+    end
+
+    function WindowFunctions:Toggle()
+        WindowFunctions:SetEnabled(not Container.Enabled)
+    end
+
+    function WindowFunctions:IsEnabled()
+        return Container.Enabled
+    end
 
     function WindowFunctions:ChangePrefix(NewPrefix)
         local KeyCode = Utility:StringToKeyCode(NewPrefix)
@@ -929,7 +1012,7 @@ function Library:CreateWindow(Properties)
     function WindowFunctions:ChangeTheme(NewTheme)
         if type(NewTheme) == 'table' then
             Library.Themes['custom'] = NewTheme
-            Library.Theme = NewTheme -- FIX: table themes were never applied
+            Library.Theme = NewTheme
         elseif type(NewTheme) == 'string' and Library.Themes[NewTheme:lower()] then
             Library.Theme = Library.Themes[NewTheme:lower()]
         else
@@ -944,7 +1027,6 @@ function Library:CreateWindow(Properties)
     end
 
     function WindowFunctions:CreateNotification(Title, Text, Duration)
-        -- FIX: the 0.5s wait used to block the caller
         task.spawn(function()
             Title = Title or 'Title'
             Text = Text or 'Text'
@@ -958,8 +1040,6 @@ function Library:CreateWindow(Properties)
             local Height = TextSize.Y + 30
             local T = Library.Theme
 
-            -- FIX: stack using the real existing notifications instead of name counting
-            -- (names collided once an older notification was destroyed)
             local PreviousSizes = 0
 
             for _, Child in next, Container:GetChildren() do
@@ -1063,14 +1143,12 @@ function Library:CreateWindow(Properties)
             Callback = Callback
         }
 
-        -- replace an existing entry instead of creating duplicate rows
         local Existing = CommandsHolderScrolling:FindFirstChild(Key .. 'CommandHolder')
 
         if Existing then
             Existing:Destroy()
         end
 
-        -- FIX: '%d' errors on non-integer values like 127.5 / 135.00000001
         local function Highlight(String, Color)
             return string.format(
                 '<font color="rgb(%d, %d, %d)">%s</font>',
@@ -1154,7 +1232,6 @@ function Library:CreateWindow(Properties)
         local Label = CommandHolder[Key .. 'Text']
         local Button = CommandHolder[Key .. 'Button']
 
-        -- // Theme Updates
         OnThemeChanged(function()
             local NewTheme = Library.Theme
 
@@ -1166,23 +1243,33 @@ function Library:CreateWindow(Properties)
             Label.Text = ConstructString(true)
         end)
 
-        -- // Events
-        Button.MouseButton1Down:Connect(function()
+        Button.InputBegan:Connect(function(Input)
+            if Input.UserInputType == Enum.UserInputType.Touch or Input.UserInputType == Enum.UserInputType.MouseButton1 then
+                IsInCommandsHolder = true
+            end
+        end)
+
+        Button.Activated:Connect(function()
+            IsInCommandsHolder = false
+
             Utility:Tween(CommandHolder, {BackgroundColor3 = Utility:Lighten(Library.Theme.BackgroundColor)}, 0.25)
 
-            -- FIX: was pcall(Execute(Name)), which ran Execute unprotected
-            local Success, Err = pcall(Execute, Key)
+            if #Arguments > 0 then
+                CommandInput.Text = Key .. ' '
+                CommandInput:CaptureFocus()
+            else
+                local Success, Err = pcall(Execute, Key)
 
-            if not Success then
-                Utility:Log('Warn', tostring(Err))
+                if not Success then
+                    Utility:Log('Warn', tostring(Err))
+                end
+
+                CloseUI()
             end
 
             Utility:Tween(CommandHolder, {BackgroundColor3 = Library.Theme.BackgroundColor}, 0.25)
-
-            CloseUI()
         end)
 
-        -- FIX: IsInCommandsHolder was never set, so clicking a command could close the UI first
         CommandHolder.MouseEnter:Connect(function()
             IsInCommandsHolder = true
             Utility:Tween(CommandHolder, {BackgroundColor3 = Utility:Lighten(Library.Theme.BackgroundColor)}, 0.25)
@@ -1200,5 +1287,4 @@ function Library:CreateWindow(Properties)
 
     return WindowFunctions
 end
-
 return Library
